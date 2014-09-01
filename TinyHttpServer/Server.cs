@@ -13,7 +13,9 @@ namespace TinyHttpServer
 
 		protected Thread serverThread;
 		protected Socket socket;
-		protected ManualResetEvent stopServer;
+		
+        protected ManualResetEvent stopServer;
+        protected ManualResetEvent nextIncoming;
 
 		public Server(int port)
 		{
@@ -26,6 +28,7 @@ namespace TinyHttpServer
 				throw new InvalidOperationException("server already started");
 			RestartSocket();
 			stopServer = new ManualResetEvent(false);
+            nextIncoming = new ManualResetEvent(true);
 			serverThread = new Thread(MainServerLoop);
 			serverThread.IsBackground = true;
 			serverThread.Start();
@@ -47,24 +50,12 @@ namespace TinyHttpServer
 				socket.Listen(30);
 				while (!stopServer.WaitOne(0, false))
 				{
-					try
-					{
-						var remoteSocket = socket.Accept();
-						var thread = new Client(remoteSocket, this);
-						thread.Start();
-					}
-					catch (SocketException e)
-					{
-						if (e.ErrorCode == 10035)
-						{
-							Thread.Sleep(10);
-						}
-						else
-						{
-							stopServer.Set();
-							throw e;
-						}
-					}
+                    if (nextIncoming.WaitOne(0))
+                    {
+                        nextIncoming.Reset();
+                        socket.BeginAccept(OnIncome, socket);
+                    }
+                    else Thread.Sleep(50);
 				}
 			}
 			finally
@@ -74,7 +65,28 @@ namespace TinyHttpServer
 			}
 		}
 
-		private void RestartSocket()
+        private void OnIncome(IAsyncResult ar)
+        {
+            Socket listener = null;
+            try
+            {
+                listener = (Socket)ar.AsyncState;
+                var remoteSocket = listener.EndAccept(ar);
+                var thread = new Client(remoteSocket, this);
+                thread.Start();
+            }
+            catch (Exception e)
+            {
+                if (listener != null) listener.Close();
+                stopServer.Set();
+            }
+            finally
+            {
+                nextIncoming.Set();
+            }
+        }
+
+	    private void RestartSocket()
 		{
 			CloseSocket();
 			InitSocket();
@@ -82,11 +94,11 @@ namespace TinyHttpServer
 
 		private void InitSocket()
 		{
-			var isV6 = Socket.OSSupportsIPv6;
+            //var isV6 = Socket.OSSupportsIPv6;
+            var isV6 = false;
 			var af = isV6 ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork;
 			var bnd = isV6 ? IPAddress.IPv6Any : IPAddress.Any;
 			socket = new Socket(af, SocketType.Stream, ProtocolType.Tcp);
-			socket.Blocking = false;
 			socket.Bind(new IPEndPoint(bnd, Port));
 		}
 

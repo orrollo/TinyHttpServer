@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -9,6 +10,8 @@ namespace TinyHttpServer
 {
 	public class Server
 	{
+        public readonly Dictionary<string,RequestHandler> Handlers = new Dictionary<string, RequestHandler>();
+
 		public int Port { get; protected set; }
 
 		protected Thread serverThread;
@@ -20,9 +23,34 @@ namespace TinyHttpServer
 		public Server(int port)
 		{
 			Port = port;
+            RegisterHandlers();
 		}
 
-		public void Start()
+	    private void RegisterHandlers()
+	    {
+	        var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+	        foreach (var assembly in assemblies)
+	        {
+	            var types = assembly.GetTypes();
+	            foreach (var type in types)
+	            {
+	                var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static);
+	                foreach (var method in methods)
+	                {
+	                    var attributes = method.GetCustomAttributes(typeof (RequestHandlerAttribute), false);
+	                    foreach (var attribute in attributes)
+	                    {
+                            var attr = (RequestHandlerAttribute)attribute;
+	                        var path = attr.Path;
+	                        var handler = (RequestHandler) Delegate.CreateDelegate(typeof (RequestHandler), method);
+	                        Handlers[path] = handler;
+	                    }
+	                }
+	            }
+	        }
+	    }
+
+	    public void Start()
 		{
 			if (serverThread != null) 
 				throw new InvalidOperationException("server already started");
@@ -109,4 +137,11 @@ namespace TinyHttpServer
 			socket = null;
 		}
 	}
+
+    [AttributeUsage(AttributeTargets.Method,AllowMultiple = true,Inherited = false)]
+    public class RequestHandlerAttribute
+    {
+        public string Path { get; protected set; }
+        public RequestHandlerAttribute(string key) { Path = key; }
+    }
 }

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
@@ -7,6 +8,8 @@ using System.Web;
 
 namespace TinyHttpServer
 {
+    public delegate bool RequestHandler(Request request);
+
     public class Client
 	{
 		protected Socket Remote;
@@ -66,8 +69,38 @@ namespace TinyHttpServer
 
         protected virtual bool ProcessByUserHandler()
 	    {
+            foreach (var key in Server.Handlers.Keys)
+            {
+                var ok = CheckUrl(key);
+                if (ok && Server.Handlers[key](Request)) return true;
+            }
             return false;
 	    }
+
+        private bool CheckUrl(string key)
+        {
+            var isRegex = key.StartsWith("~");
+            var url = Request.Url;
+            return isRegex ? CheckRegex(key, url) : CheckString(key, url);
+        }
+
+        protected virtual bool CheckString(string key, string url)
+        {
+            return !string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(key) && url.StartsWith(key);
+        }
+
+        protected static Dictionary<string,Regex> reCache = new Dictionary<string,Regex>();
+
+        protected virtual bool CheckRegex(string key, string url)
+        {
+            if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(key)) return false;
+            var re = new Regex(key.Substring(1), RegexOptions.IgnoreCase);
+            var m = re.Match(url);
+            if (!m.Success) return false;
+            for (int idx = 0;idx < m.Captures.Count; idx++)
+                Request.Param["_" + idx] = m.Captures[idx].Value;
+            return true;
+        }
 
         protected virtual void ParseRequest()
 	    {
